@@ -3,7 +3,7 @@ import { Upload, Send, Instagram, Youtube, Activity } from 'lucide-react';
 
 // Configuration
 const SUPABASE_URL = 'https://gfwflqqudlgnjjnyrofr.supabase.co';
-const SUPABASE_ANON_KEY = 'YOUR_SUPABASE_ANON_KEY_HERE';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imdmd2ZscXF1ZGxnbmpqbnlyb2ZyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTg2MzA0MTcsImV4cCI6MjA3NDIwNjQxN30.H3vLpkT_YjSAEUP0hv8EmiPSKAF1SidPEuNrEqjVFYM';
 const N8N_WEBHOOK_URL = 'https://n8n-yvct.onrender.com/webhook/post-video';
 
 interface Post {
