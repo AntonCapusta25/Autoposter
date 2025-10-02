@@ -4,12 +4,11 @@ import { Upload, Send, Instagram, Youtube, Activity } from 'lucide-react';
 // Configuration
 const SUPABASE_URL = 'https://gfwflqqudlgnjjnyrofr.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imdmd2ZscXF1ZGxnbmpqbnlyb2ZyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTg2MzA0MTcsImV4cCI6MjA3NDIwNjQxN30.H3vLpkT_YjSAEUP0hv8EmiPSKAF1SidPEuNrEqjVFYM';
-const N8N_WEBHOOK_URL = 'https://n8n-yvct.onrender.com/webhook/post-video';
+const EDGE_FUNCTION_URL = `${SUPABASE_URL}/functions/v1/upload-video`;
 
 interface Post {
   id: string;
-  google_drive_id: string;
-  google_drive_link: string;
+  video_url: string;
   video_name: string;
   title: string;
   caption: string;
@@ -23,6 +22,7 @@ interface Post {
   };
   created_at: string;
   processed_at?: string;
+  error_message?: string;
 }
 
 interface Platforms {
@@ -101,30 +101,44 @@ export default function App() {
     }
 
     setUploading(true);
-    setUploadStatus('Preparing upload...');
+    setUploadStatus('Uploading to Supabase Storage...');
 
     try {
-      const reader = new FileReader();
-      const videoBase64 = await new Promise<string>((resolve, reject) => {
-        reader.onload = () => {
-          const result = reader.result as string;
-          resolve(result.split(',')[1]);
-        };
-        reader.onerror = reject;
-        reader.readAsDataURL(videoFile);
-      });
+      // Upload video to Supabase Storage
+      const fileName = `${Date.now()}-${videoFile.name}`;
+      const uploadResponse = await fetch(
+        `${SUPABASE_URL}/storage/v1/object/videos/${fileName}`,
+        {
+          method: 'POST',
+          headers: {
+            'apikey': SUPABASE_ANON_KEY,
+            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+            'Content-Type': videoFile.type
+          },
+          body: videoFile
+        }
+      );
 
-      setUploadStatus('Uploading to Google Drive...');
+      if (!uploadResponse.ok) {
+        const error = await uploadResponse.json();
+        throw new Error(error.message || 'Failed to upload to storage');
+      }
 
-      const response = await fetch(N8N_WEBHOOK_URL, {
+      const publicUrl = `${SUPABASE_URL}/storage/v1/object/public/videos/${fileName}`;
+
+      setUploadStatus('Processing video...');
+
+      // Call Supabase Edge Function
+      const response = await fetch(EDGE_FUNCTION_URL, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+          'apikey': SUPABASE_ANON_KEY
         },
         body: JSON.stringify({
-          video_base64: videoBase64,
+          video_url: publicUrl,
           video_name: videoFile.name,
-          video_mimetype: videoFile.type,
           title,
           caption,
           hashtags,
@@ -132,13 +146,17 @@ export default function App() {
         })
       });
 
-      if (!response.ok) throw new Error('Upload failed');
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Upload failed');
+      }
 
-      await response.json();
+      const result = await response.json();
       
       setUploadStatus('Processing complete!');
       await fetchPosts();
 
+      // Reset form
       setVideoFile(null);
       setVideoPreview(null);
       setTitle('');
@@ -148,6 +166,7 @@ export default function App() {
       
       alert('Video uploaded successfully!');
     } catch (error) {
+      console.error('Upload error:', error);
       setUploadStatus('');
       alert('Error: ' + (error instanceof Error ? error.message : 'Unknown error'));
     } finally {
@@ -162,22 +181,14 @@ export default function App() {
           <div className="flex items-center justify-between">
             <div>
               <h1 className="text-4xl font-bold text-gray-800 mb-2">Social Media Auto-Poster</h1>
-              <p className="text-gray-600">Google Drive + n8n + Supabase</p>
+              <p className="text-gray-600">Supabase Edge Functions + Storage</p>
             </div>
             <div className="flex items-center gap-2 px-4 py-2 bg-green-50 rounded-lg border border-green-200">
               <Activity size={18} className="text-green-600" />
-              <span className="text-sm text-green-600 font-medium">n8n Active</span>
+              <span className="text-sm text-green-600 font-medium">Serverless Active</span>
             </div>
           </div>
         </header>
-
-        {SUPABASE_ANON_KEY === 'YOUR_SUPABASE_ANON_KEY_HERE' && (
-          <div className="mb-6 bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-            <p className="text-sm text-yellow-800">
-              ⚠️ Please update SUPABASE_ANON_KEY in the code
-            </p>
-          </div>
-        )}
 
         {uploadStatus && (
           <div className="mb-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
@@ -220,7 +231,7 @@ export default function App() {
                     <label className="cursor-pointer">
                       <Upload className="mx-auto h-12 w-12 text-gray-400 mb-4" />
                       <p className="text-sm text-gray-600 mb-2">Click to upload video</p>
-                      <p className="text-xs text-gray-500">Will be uploaded to Google Drive</p>
+                      <p className="text-xs text-gray-500">Will be uploaded to Supabase Storage</p>
                       <input
                         type="file"
                         accept="video/*"
@@ -334,22 +345,23 @@ export default function App() {
                 {posts.map((post) => (
                   <div key={post.id} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
                     <div className="flex gap-4">
-                      {post.google_drive_link && (
-                        <div className="w-24 h-24 bg-gray-100 rounded-lg flex items-center justify-center">
-                          <svg className="w-12 h-12 text-gray-400" fill="currentColor" viewBox="0 0 24 24">
-                            <path d="M12.01 1.5L0 20.5h5.99l6.01-10.36L18.01 20.5H24l-12.01-19z"/>
-                          </svg>
+                      {post.video_url && (
+                        <div className="w-24 h-24 bg-gray-100 rounded-lg overflow-hidden flex-shrink-0">
+                          <video 
+                            src={post.video_url} 
+                            className="w-full h-full object-cover"
+                          />
                         </div>
                       )}
-                      <div className="flex-1">
+                      <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between mb-2">
                           <span className={`text-xs px-2 py-1 rounded-full ${
-                            post.status === 'posted' ? 'bg-green-100 text-green-700' :
+                            post.status === 'completed' ? 'bg-green-100 text-green-700' :
                             post.status === 'processing' ? 'bg-blue-100 text-blue-700' :
                             post.status === 'failed' ? 'bg-red-100 text-red-700' :
                             'bg-yellow-100 text-yellow-700'
                           }`}>
-                            {post.status === 'posted' ? '✓ Posted' :
+                            {post.status === 'completed' ? '✓ Completed' :
                              post.status === 'processing' ? '⟳ Processing' :
                              post.status === 'failed' ? '✗ Failed' :
                              '⏰ Queued'}
@@ -360,7 +372,7 @@ export default function App() {
                         </div>
                         
                         {post.title && (
-                          <h3 className="text-sm font-semibold text-gray-800 mb-1">{post.title}</h3>
+                          <h3 className="text-sm font-semibold text-gray-800 mb-1 truncate">{post.title}</h3>
                         )}
                         
                         <p className="text-sm text-gray-600 mb-2 line-clamp-2">
@@ -368,7 +380,11 @@ export default function App() {
                         </p>
                         
                         {post.hashtags && (
-                          <p className="text-xs text-blue-600 mb-2">{post.hashtags}</p>
+                          <p className="text-xs text-blue-600 mb-2 truncate">{post.hashtags}</p>
+                        )}
+                        
+                        {post.error_message && (
+                          <p className="text-xs text-red-600 mb-2">{post.error_message}</p>
                         )}
                         
                         <div className="flex gap-2 flex-wrap items-center">
@@ -381,14 +397,14 @@ export default function App() {
                             </span>
                           ))}
                           
-                          {post.google_drive_link && (
+                          {post.video_url && (
                             <a 
-                              href={post.google_drive_link}
+                              href={post.video_url}
                               target="_blank"
                               rel="noopener noreferrer"
                               className="text-xs text-blue-500 hover:underline"
                             >
-                              Drive →
+                              Video →
                             </a>
                           )}
                           
